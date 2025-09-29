@@ -18,6 +18,7 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
     else()
         set(GGML_CPU_NAME ggml-cpu)
     endif()
+    
 
     ggml_add_backend_library(${GGML_CPU_NAME})
 
@@ -49,6 +50,12 @@ function(ggml_add_cpu_backend_variant_impl tag_name)
         ggml-cpu/ops.cpp
         )
 
+            # 添加忽略警告选项
+    if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${GGML_CPU_NAME} PRIVATE -w)
+    elseif (MSVC)
+        target_compile_options(${GGML_CPU_NAME} PRIVATE /W0)
+    endif()
     target_compile_features(${GGML_CPU_NAME} PRIVATE c_std_11 cxx_std_17)
     target_include_directories(${GGML_CPU_NAME} PRIVATE . ggml-cpu)
 

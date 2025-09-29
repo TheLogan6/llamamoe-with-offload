@@ -37,6 +37,12 @@ add_library(llama
             unicode.h
             )
 
+if (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(llama PRIVATE -w)
+elseif (MSVC)
+    target_compile_options(llama PRIVATE /W0)
+    
+endif()
 target_include_directories(llama PRIVATE .)
 target_include_directories(llama PUBLIC ../include)
 target_compile_features   (llama PRIVATE cxx_std_17) # don't bump
