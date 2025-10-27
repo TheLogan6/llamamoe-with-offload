@@ -12,7 +12,8 @@
 
 // ggml_compute_forward_dup
 
-
+int global_experts_number = 0;
+int global_high_score_experts = 0;
 
 static void ggml_compute_forward_dup_same_cont(
         const ggml_compute_params * params,
@@ -8709,7 +8710,7 @@ void ggml_compute_forward_argsort_load_first(
             
             // idx: pool->experts[(layer_idx-1) * n_expert , (layer_idx) * n_expert)
             // 分离前三个专家和后面的专家
-            int a=2;
+            int a = (global_high_score_experts > 2) ? 2 : 1;
             if (ne0 > a) {
                 // 收集loaded为true的专家（排除前三个）
                 std::vector<int32_t> loaded_experts;
@@ -8717,7 +8718,7 @@ void ggml_compute_forward_argsort_load_first(
                 
                 for (int64_t i = a; i < ne0; i++) {
                     int32_t expert_idx = dst_data[i];
-                    if (pool->experts[(layer_id) * 64+expert_idx]->loaded) {
+                    if (pool->experts[(layer_id) * global_experts_number + expert_idx]->loaded) {
                         loaded_experts.push_back(expert_idx);
                     } else {
                         unloaded_experts.push_back(expert_idx);
@@ -8740,6 +8741,82 @@ void ggml_compute_forward_argsort_load_first(
     //保持前三个专家的排序顺序不变，后面五个从loaded为true的专家里选五个得分最高的。如果专家里不足五个，比如差2个那么再从loaded为false的专家里补充2个。
     }
 }
+
+void ggml_compute_forward_argsort_load_first_2(
+    const ggml_compute_params * params,
+    ggml_tensor * dst) {
+
+    const ggml_tensor * src0 = dst->src[0];
+
+    GGML_TENSOR_UNARY_OP_LOCALS
+
+    GGML_ASSERT(nb0 == sizeof(float));
+
+    const int ith = params->ith;
+    const int nth = params->nth;
+
+    const int64_t nr = ggml_nrows(src0);
+
+    ggml_sort_order order = (ggml_sort_order) ggml_get_op_params_i32(dst, 0);
+
+    int layer_id =  ggml_get_op_params_i32(dst, 1);
+
+    for (int64_t i = ith; i < nr; i += nth) {
+        int32_t * dst_data = (int32_t *)((char *) dst->data + i*nb1);
+        const float * src_data = (float *)((char *) src0->data + i*nb01);
+
+        for (int64_t j = 0; j < ne0; j++) {
+            dst_data[j] = j;
+        }
+
+        // C doesn't have a functional sort, so we do a bubble sort instead
+        for (int64_t j = 0; j < ne0; j++) {  //ne0=(dst)->ne[0]
+            for (int64_t k = j + 1; k < ne0; k++) {
+                if ((order == GGML_SORT_ORDER_ASC  && src_data[dst_data[j]] > src_data[dst_data[k]]) ||
+                    (order == GGML_SORT_ORDER_DESC && src_data[dst_data[j]] < src_data[dst_data[k]])) {
+                    int32_t tmp = dst_data[j];
+                    dst_data[j] = dst_data[k];
+                    dst_data[k] = tmp;
+                }
+            }
+        }
+        if (order == GGML_SORT_ORDER_DESC) {
+            struct experts_pool* pool = global_expert_pool[UP_TYPE];//当前层的pool
+            
+            // idx: pool->experts[(layer_idx-1) * n_expert , (layer_idx) * n_expert)
+            // 分离前三个专家和后面的专家
+            int a = (global_high_score_experts > 2) ? 2 : 0;
+            if (ne0 > a) {
+                // 收集loaded为true的专家（排除前三个）
+                std::vector<int32_t> loaded_experts;
+                std::vector<int32_t> unloaded_experts;
+                
+                for (int64_t i = a; i < ne0; i++) {
+                    int32_t expert_idx = dst_data[i];
+                    if (pool->experts[(layer_id) * global_experts_number + expert_idx]->loaded) {
+                        loaded_experts.push_back(expert_idx);
+                    } else {
+                        unloaded_experts.push_back(expert_idx);
+                    }
+                }
+                
+                int64_t new_index = a;
+                
+                for (int64_t i = 0; i < loaded_experts.size(); i++) {
+                    dst_data[new_index++] = loaded_experts[i];
+                }
+                for (int64_t i = 0; i < unloaded_experts.size(); i++) {
+                    dst_data[new_index++] = unloaded_experts[i];
+                }
+            }
+        }
+    //todo:改成load优先struct experts_pool* = global_expert_pool[UP_TYPE] 
+    //上面的ne0是该层experts的总数，这是判断某个expert[i]是否loaded的方法。pool[layer_id]->experts[i]->loaded。
+    //上面是得到expert i按照得分 src_data[dst_data[i]排序的结果即dst_data。我需要你修改为如下的方案。下面的方案只在GGML_SORT_ORDER_DESC时启动
+    //保持前三个专家的排序顺序不变，后面五个从loaded为true的专家里选五个得分最高的。如果专家里不足五个，比如差2个那么再从loaded为false的专家里补充2个。
+    }
+}
+
 void ggml_compute_forward_argsort(
     const ggml_compute_params * params,
     ggml_tensor * dst) {

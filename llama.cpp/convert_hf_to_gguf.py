@@ -162,6 +162,8 @@ class ModelBase:
         return path.with_name(new_name)
 
     def find_hparam(self, keys: Iterable[str], optional: bool = False) -> Any:
+        if "original_max_position_embeddings" in keys:
+            return 4096
         key = next((k for k in keys if k in self.hparams), None)
         if key is not None:
             return self.hparams[key]

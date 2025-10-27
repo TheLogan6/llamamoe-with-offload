@@ -25,8 +25,14 @@
 #include <regex>
 #include <sstream>
 #include <stdexcept>
+#include <sys/mman.h> 
 
 extern struct experts_pool* global_expert_pool[3]; 
+
+// int global_experts_number = 0;
+// int global_high_score_experts = 0;
+extern int global_experts_number;
+extern int global_high_score_experts;
 
 extern char* global_experts_path;
 extern int32_t global_load_experts_number;
@@ -287,8 +293,8 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
 
     // create a temporary dummy buffer for the weight so that supports_op can check the buffer type
     GGML_ASSERT(w->buffer == nullptr);
-    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0);
-    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor);
+    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0); //ggml_backend_amx_buffer_type
+    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor); //
     ggml_backend_buffer_free(w->buffer);
     w->buffer = nullptr;
 
@@ -2194,7 +2200,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             ggml_backend_buffer_type_t buft = nullptr;
 
             // check overrides
-            if (ml.tensor_buft_overrides) {
+            if (ml.tensor_buft_overrides) { // false
                 std::string tensor_name = tn.str();
                 for (const auto * overrides = ml.tensor_buft_overrides; overrides->pattern != nullptr; ++overrides) {
                     std::regex pattern(overrides->pattern);
@@ -2264,6 +2270,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             // pthread_mutex_init(&global_expert_pool[i]->mutex, NULL);
             global_expert_pool[i]->experts = (struct expert_cache**)malloc(n_layer * n_expert * sizeof(struct expert_cache*));
         };
+        global_experts_number = n_expert;
+        global_high_score_experts = n_expert_used;
 
 
         const auto tn = LLM_TN(arch);
@@ -5804,7 +5812,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
 
-        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported ) {
+        // if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
                 // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
@@ -5825,7 +5834,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
         }
         else {
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//not triggered
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -5886,13 +5895,16 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
     global_experts_path = params.experts_path;
     global_load_experts_number = params.load_experts_number;
-    for (auto & it : ctx_bufs) {
+    for (auto & it : ctx_bufs) {  // here might be two
         ggml_context * ctx = it.first;
         auto & bufs = it.second;
-        if (!ml.load_all_data(ctx, bufs, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) {
+        if (!ml.load_all_data(ctx, bufs, use_mlock ? &pimpl->mlock_mmaps : NULL, params.progress_callback, params.progress_callback_user_data)) { // here is malloc
             return false;
         }
     }
+    const auto & mapping = ml.mappings.at(0);
+    munmap(mapping->addr(), mapping->size());
+
 
     if (use_mmap_buffer) {
         for (auto & mapping : ml.mappings) {

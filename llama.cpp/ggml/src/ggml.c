@@ -1019,7 +1019,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 91, "GGML_OP_COUNT != 91");
+static_assert(GGML_OP_COUNT == 92, "GGML_OP_COUNT != 92");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1123,7 +1123,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 91, "GGML_OP_COUNT != 91");
+static_assert(GGML_OP_COUNT == 92, "GGML_OP_COUNT != 92");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -4972,7 +4972,14 @@ struct ggml_tensor * ggml_argsort_loadfirst(
 
     ggml_set_op_params_i32(result, 0, (int32_t) order);
     ggml_set_op_params_i32(result, 1,  layer_id);
-    result->op     = GGML_OP_ARGSORT_LOADFIRST;
+
+    srand(time(NULL));
+    int random_bit = rand() % 2;
+    if (random_bit == 0) {
+        result->op     = GGML_OP_ARGSORT_LOADFIRST;
+    } else {
+        result->op     = GGML_OP_ARGSORT_LOADFIRST_2;
+    }
     result->src[0] = a;
 
     return result;

@@ -172,6 +172,8 @@
 // TODO
 //
 //
+extern int global_experts_number;
+extern int global_high_score_experts;
 
 #ifdef GGML_SHARED
 #    if defined(_WIN32) && !defined(__MINGW32__)
@@ -531,6 +533,7 @@ extern "C" {
         GGML_OP_TIMESTEP_EMBEDDING,
         GGML_OP_ARGSORT,
         GGML_OP_ARGSORT_LOADFIRST,
+        GGML_OP_ARGSORT_LOADFIRST_2,
         GGML_OP_LEAKY_RELU,
 
         GGML_OP_FLASH_ATTN_EXT,

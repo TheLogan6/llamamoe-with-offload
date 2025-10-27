@@ -1945,7 +1945,7 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
     }
     else{
         if (tensor->data!=NULL){
-            void * tmp = tensor->data;
+            void * tmp = tensor->data;   //data invalid
             tensor->data = (void *)malloc(tensor->nb[3]);
             memcpy(tensor->data, tmp, tensor->nb[3]);
             // munmap(tmp, tensor->nb[3]);

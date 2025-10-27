@@ -1041,7 +1041,7 @@ bool llama_model_loader::load_all_data(
                 buf_mmap = bufs.at(weight->idx);
             }
             uint8_t * data = (uint8_t *) mapping->addr() + weight->offs; // idx, offs, tensor
-            if (isfirst){
+            if (isfirst){ // be careful with two ctx_map
                 uint8_t * firstadd = (uint8_t *) mapping->addr();
                 mapsize = mapping->size();
                 isfirst = false;
@@ -1112,8 +1112,9 @@ bool llama_model_loader::load_all_data(
     }
     // free temporary resources used for async uploads
     // munmap(firstadd, mapsize);
-    const auto & mapping = mappings.at(0);
-    munmap(mapping->addr(), mapping->size());
+
+    // const auto & mapping = mappings.at(0);
+    // munmap(mapping->addr(), mapping->size());
     // free(firstadd);
     for (auto * event : events) {
         ggml_backend_event_synchronize(event);
