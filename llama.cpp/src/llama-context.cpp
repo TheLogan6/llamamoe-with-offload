@@ -326,7 +326,7 @@ llama_context::llama_context(
                 if (ggml_is_quantized(params.type_v)) {
                     throw std::runtime_error("quantized V cache was requested, but this requires Flash Attention");
                 }
-            } else {
+            } else {//false
                 cparams.flash_attn = true;
                 LLAMA_LOG_INFO("%s: Flash Attention was auto, set to enabled\n", __func__);
             }

@@ -367,7 +367,7 @@ void ggml_vec_silu_f32(const int n, float * y, const float * x) {
 }
 
 void ggml_vec_swiglu_f32(const int n, float * y, const float * x, const float * g) {
-    int i = 0;
+    int i = 0;//n=96
 #if defined(__AVX512F__) && defined(__AVX512DQ__)
     for (; i + 15 < n; i += 16) {
         _mm512_storeu_ps(y + i, _mm512_mul_ps(ggml_v_silu(_mm512_loadu_ps(x + i)), _mm512_loadu_ps(g + i)));

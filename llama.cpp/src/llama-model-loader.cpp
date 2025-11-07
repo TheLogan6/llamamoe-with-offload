@@ -1032,7 +1032,7 @@ bool llama_model_loader::load_all_data(
             }
         }
 
-        size_t n_size = ggml_nbytes(cur);
+        size_t n_size = ggml_nbytes(cur); //根据type计算size大小
 
         if (use_mmap) {
             const auto & mapping = mappings.at(weight->idx);  //mapping设置的是addr
@@ -1054,7 +1054,7 @@ bool llama_model_loader::load_all_data(
             }
 
             GGML_ASSERT(buf_mmap || cur->data); // either we have a buffer to allocate the tensor in, or it is already allocated
-            if (buf_mmap && cur->data == nullptr) {
+            if (buf_mmap && cur->data == nullptr) { // when not experts Q4, this way
                 ggml_backend_tensor_alloc(buf_mmap, cur, data, this->experts_path, this->load_experts_number);  //TODO addr = data
                 if (lmlocks) {
                     const auto & lmlock = lmlocks->at(weight->idx);
@@ -1064,8 +1064,8 @@ bool llama_model_loader::load_all_data(
                 auto & mmap_used = mmaps_used[weight->idx];
                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
-            } else {
-                ggml_backend_tensor_set(cur, data, 0, n_size);
+            } else { // when experts Q4, this way
+                ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:                
             }
         } else {
             const auto & file = files.at(weight->idx);

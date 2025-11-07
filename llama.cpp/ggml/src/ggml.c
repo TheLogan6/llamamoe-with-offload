@@ -4973,13 +4973,14 @@ struct ggml_tensor * ggml_argsort_loadfirst(
     ggml_set_op_params_i32(result, 0, (int32_t) order);
     ggml_set_op_params_i32(result, 1,  layer_id);
 
-    srand(time(NULL));
-    int random_bit = rand() % 2;
-    if (random_bit == 0) {
-        result->op     = GGML_OP_ARGSORT_LOADFIRST;
-    } else {
-        result->op     = GGML_OP_ARGSORT_LOADFIRST_2;
-    }
+    result->op     = GGML_OP_ARGSORT_LOADFIRST;
+    // srand(time(NULL));
+    // int random_bit = rand() % 2;
+    // if (random_bit == 0) {
+    //     result->op     = GGML_OP_ARGSORT_LOADFIRST;
+    // } else {
+    //     result->op     = GGML_OP_ARGSORT_LOADFIRST_2;
+    // }
     result->src[0] = a;
 
     return result;
@@ -7252,7 +7253,7 @@ bool ggml_threadpool_params_match(const struct ggml_threadpool_params * p0, cons
 }
 
 
-int ggml_get_layerid_from_name(struct ggml_tensor * tensor){
+int ggml_get_layerid_from_name(const struct ggml_tensor * tensor){
     // tensor->name: case： blk.17.ffn_gate_exps.{}.weight
     char *start = strstr(tensor->name, "blk.");
     start += 4;

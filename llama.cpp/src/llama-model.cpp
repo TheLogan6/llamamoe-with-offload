@@ -294,7 +294,7 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
     // create a temporary dummy buffer for the weight so that supports_op can check the buffer type
     GGML_ASSERT(w->buffer == nullptr);
     w->buffer = ggml_backend_buft_alloc_buffer(buft, 0); //ggml_backend_amx_buffer_type
-    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor); //
+    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor); // 这里是初始开辟空间？
     ggml_backend_buffer_free(w->buffer);
     w->buffer = nullptr;
 
@@ -5786,6 +5786,12 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     const size_t n_max_backend_buffer = ctx_map.size() * ml.files.size();
     pimpl->bufs.reserve(n_max_backend_buffer);
 
+    ml.experts_path = params.experts_path;
+    ml.load_experts_number = params.load_experts_number;
+
+    global_experts_path = params.experts_path;
+    global_load_experts_number = params.load_experts_number;
+    
     for (auto & it : ctx_map) {
         ggml_backend_buffer_type_t buft = it.first;
         ggml_context * ctx              = it.second;
@@ -5812,8 +5818,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
 
-        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported ) {
-        // if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
+        // if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported ) {
+        if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
                 // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
@@ -5834,7 +5840,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
         }
         else {
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//not triggered
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//olmoef16 not triggered, q4/amx cpu here
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -5890,11 +5896,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     }
 
     // load tensor data
-    ml.experts_path = params.experts_path;
-    ml.load_experts_number = params.load_experts_number;
-
-    global_experts_path = params.experts_path;
-    global_load_experts_number = params.load_experts_number;
+    
     for (auto & it : ctx_bufs) {  // here might be two
         ggml_context * ctx = it.first;
         auto & bufs = it.second;
@@ -5902,6 +5904,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             return false;
         }
     }
+    
     const auto & mapping = ml.mappings.at(0);
     munmap(mapping->addr(), mapping->size());
 

@@ -12,7 +12,7 @@ ggml_backend_buffer_type_t ggml_backend_cpu_repack_buffer_type(void);
 
 template <int K> constexpr int QK_0() {
     if constexpr (K == 4) {
-        return QK4_0;
+        return QK4_0; //32
     }
     if constexpr (K == 8) {
         return QK8_0;
@@ -22,7 +22,7 @@ template <int K> constexpr int QK_0() {
 
 template <int K, int N> struct block {
     ggml_half d[N];                         // deltas for N qK_0 blocks
-    int8_t    qs[(QK_0<K>() * N * K) / 8];  // quants for N qK_0 blocks
+    int8_t    qs[(QK_0<K>() * N * K) / 8];  // quants for N qK_0 blocks 32element，4个bit，8个block，/8: 一个字节8bits，这是dat
 };
 
 // control size

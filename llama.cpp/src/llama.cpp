@@ -150,7 +150,7 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
             return 0;
         }
 
-        if (!model.load_tensors(ml)) {
+        if (!model.load_tensors(ml)) { // 先load tensors，再load all data
             return -2;
         }
     } catch (const std::exception & err) {

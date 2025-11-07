@@ -3711,15 +3711,15 @@ static void ggml_compute_forward_geglu(
 
 // ggml_compute_forward_swiglu
 
-static void ggml_compute_forward_swiglu_f32(
+static void ggml_compute_forward_swiglu_f32( //SwigLU(x) = Swish(x) * GLU(x), 这里报错是因为src0->data是nan的，src0是ffn_moe_gate_0
         const ggml_compute_params * params,
         ggml_tensor * dst) {
 
-    const ggml_tensor * src0 = dst->src[0];
-    const ggml_tensor * src1 = dst->src[1];
+    const ggml_tensor * src0 = dst->src[0]; // ffn_moe_gate_0: 960*16*2*1, experts=0，这个2是什么含义
+    const ggml_tensor * src1 = dst->src[1];  //ffn_moe_up_0
     char * src0_d = (char *) src0->data;
     char * src1_d = (char *) (src1 ? src1->data : src0->data);
-    const size_t src0_o = src0->nb[1];
+    const size_t src0_o = src0->nb[1]; //nb: 4, 3840=4*960, 61440, 122880
     const size_t src1_o = src1 ? src1->nb[1] : src0->nb[1];
 
     GGML_ASSERT(ggml_is_contiguous_1(src0));
@@ -3733,8 +3733,8 @@ static void ggml_compute_forward_swiglu_f32(
     const int ith = params->ith;
     const int nth = params->nth;
 
-    const int nc = src1 ? src0->ne[0] : src0->ne[0] / 2;
-    const int nr = ggml_nrows(src0);
+    const int nc = src1 ? src0->ne[0] : src0->ne[0] / 2; // column,dim:960
+    const int nr = ggml_nrows(src0); // 除了第一位 连乘，32
 
     GGML_ASSERT(dst->ne[0] == nc);
     GGML_ASSERT(ggml_nrows(dst) == nr);
@@ -3749,14 +3749,14 @@ static void ggml_compute_forward_swiglu_f32(
     const int ir1 = MIN(ir0 + dr, nr);
 
     for (int i1 = ir0; i1 < ir1; i1++) {
-        float * src0_p = (float *) (src0_d + i1*src0_o);
+        float * src0_p = (float *) (src0_d + i1*src0_o); // 线程1处理column1
         float * src1_p = (float *) (src1_d + i1*src1_o);
 
         if (!src1) {
             src0_p += swapped ? nc : 0;
             src1_p += swapped ? 0 : nc;
         }
-
+        //第i1的experts,src0_p是nan的
         ggml_vec_swiglu_f32(nc, (float *) ((char *) dst->data + i1*(dst->nb[1])), src0_p, src1_p);
 
 #ifndef NDEBUG
@@ -4326,7 +4326,14 @@ static void ggml_compute_forward_rms_norm_f32(
 
                 ggml_float sum = 0.0;
                 for (int64_t i00 = 0; i00 < ne00; i00++) {
-                    sum += (ggml_float)(x[i00] * x[i00]);
+                    // printf("%f, %f \n", x[i00],sum);
+                    // if(x[i00] * x[i00] || x[i00] > 1000) {
+                    //     printf("nan detected at index %lld \n", i00);
+                    // }
+                    // else{
+                        sum += (ggml_float)(x[i00] * x[i00]);
+                    // }
+                    
                 }
 
                 const float mean = sum/ne00;
@@ -8705,6 +8712,7 @@ void ggml_compute_forward_argsort_load_first(
                 }
             }
         }
+        // printf("%d\n", dst_data[0]);
         if (order == GGML_SORT_ORDER_DESC) {
             struct experts_pool* pool = global_expert_pool[UP_TYPE];//当前层的pool
             
@@ -8712,7 +8720,7 @@ void ggml_compute_forward_argsort_load_first(
             // 分离前三个专家和后面的专家
             int a = (global_high_score_experts > 2) ? 2 : 1;
             if (ne0 > a) {
-                // 收集loaded为true的专家（排除前三个）
+                
                 std::vector<int32_t> loaded_experts;
                 std::vector<int32_t> unloaded_experts;
                 

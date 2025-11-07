@@ -2917,7 +2917,7 @@ QK_K = 256
 GGML_QUANT_SIZES: dict[GGMLQuantizationType, tuple[int, int]] = {
     GGMLQuantizationType.F32:     (1, 4),
     GGMLQuantizationType.F16:     (1, 2),
-    GGMLQuantizationType.Q4_0:    (32, 2 + 16),
+    GGMLQuantizationType.Q4_0:    (32, 2 + 16), # very important
     GGMLQuantizationType.Q4_1:    (32, 2 + 2 + 16),
     GGMLQuantizationType.Q5_0:    (32, 2 + 4 + 16),
     GGMLQuantizationType.Q5_1:    (32, 2 + 2 + 4 + 16),

@@ -140,6 +140,8 @@ extern "C" {
     GGML_BACKEND_API void ggml_cpu_fp32_to_bf16(const float *, ggml_bf16_t *, int64_t);
     GGML_BACKEND_API void ggml_cpu_bf16_to_fp32(const ggml_bf16_t *, float *, int64_t);
 
+
+    GGML_BACKEND_API void swap(struct expert_cache *target, struct expert_cache *src);
 #ifdef __cplusplus
 }
 #endif

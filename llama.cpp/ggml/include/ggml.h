@@ -2499,7 +2499,7 @@ extern "C" {
 
     GGML_API struct ggml_tensor * ggml_set_zero(struct ggml_tensor * tensor);
 
-    GGML_API int ggml_get_layerid_from_name(struct ggml_tensor * tensor);
+    GGML_API int ggml_get_layerid_from_name(const struct ggml_tensor * tensor);
     GGML_API int ggml_get_experts_type_from_name(struct ggml_tensor * tensor);
 
     //

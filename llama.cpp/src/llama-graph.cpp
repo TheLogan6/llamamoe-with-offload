@@ -904,7 +904,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         default:
             GGML_ABORT("fatal error");
     }
-    cb(probs, "ffn_moe_probs", il);
+    cb(probs, "ffn_moe_probs", il); // 这是生成一个probs的tensor，name="ffn_moe_probs_{il}"
 
     // add experts selection bias - introduced in DeepSeek V3
     // leave probs unbiased as it's later used to get expert weights
@@ -961,7 +961,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         cb(cur, "ffn_moe_weighted", il);
     }
 
-    ggml_tensor * up = build_lora_mm_id(up_exps, cur, selected_experts); // [n_ff, n_expert_used, n_tokens]
+    ggml_tensor * up = build_lora_mm_id(up_exps, cur, selected_experts); // [n_ff, n_expert_used, n_tokens],w1
     cb(up, "ffn_moe_up", il);
 
     if (up_exps_b) {
@@ -971,7 +971,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     ggml_tensor * experts = nullptr;
     if (gate_exps) {
-        cur = build_lora_mm_id(gate_exps, cur, selected_experts); // [n_ff, n_expert_used, n_tokens]
+        cur = build_lora_mm_id(gate_exps, cur, selected_experts); // [n_ff, n_expert_used, n_tokens], w3
         cb(cur, "ffn_moe_gate", il);
     } else {
         cur = up;
@@ -985,8 +985,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     switch (type_op) {
         case LLM_FFN_SILU:
             if (gate_exps) {
-                cur = ggml_swiglu_split(ctx0, cur, up);
-                cb(cur, "ffn_moe_swiglu", il);
+                cur = ggml_swiglu_split(ctx0, cur, up); // siglgu(cur) * up  , 一般是 act_fn(gate_proj) * up_proj
+                cb(cur, "ffn_moe_swiglu", il); // here is phimoe: swiglu
             } else {
                 cur = ggml_silu(ctx0, cur);
                 cb(cur, "ffn_moe_silu", il);
@@ -1028,8 +1028,8 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     }
 
     if (!weight_before_ffn) {
-        experts = ggml_mul(ctx0, experts, weights);
-        cb(cur, "ffn_moe_weighted", il);
+        experts = ggml_mul(ctx0, experts, weights); // down_experts * ffn_moe_weights_norm_2 (reshaped)
+        cb(cur, "ffn_moe_weighted", il); // swiglue 
     }
 
     ggml_tensor * cur_experts[LLAMA_MAX_EXPERTS] = { nullptr };

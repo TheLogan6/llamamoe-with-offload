@@ -1850,7 +1850,7 @@ static void ggml_compute_forward_mul_mat_id(
     int layer_id = ggml_get_layerid_from_name(src0);
     struct experts_pool* pool = src0->experts[0]->pool;
     for (int cur_a = 0; cur_a < n_as; ++cur_a) { // 128,every expert => tokens
-        const int64_t cne1 = matrix_row_counts[cur_a];
+        const int64_t cne1 = matrix_row_counts[cur_a]; // 当前的expert对应which token
 
         if (cne1 == 0) {
             continue;
@@ -2239,7 +2239,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
         case GGML_OP_FLASH_ATTN_EXT:
             {
-                ggml_compute_forward_flash_attn_ext(params, tensor);
+                ggml_compute_forward_flash_attn_ext(params, tensor); // __fattn__-0
             } break;
         case GGML_OP_FLASH_ATTN_BACK:
             {
@@ -3171,8 +3171,8 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         /*.wdata     =*/ cplan->work_data,
         /*.threadpool=*/ tp,
     };
-
-    for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
+    ggml_graph_print(cgraph);
+    for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) { // here is the forward
         struct ggml_tensor * node = cgraph->nodes[node_n];
 
         ggml_compute_forward(&params, node);
