@@ -3171,7 +3171,7 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
         /*.wdata     =*/ cplan->work_data,
         /*.threadpool=*/ tp,
     };
-    ggml_graph_print(cgraph);
+    // ggml_graph_print(cgraph);
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) { // here is the forward
         struct ggml_tensor * node = cgraph->nodes[node_n];
 

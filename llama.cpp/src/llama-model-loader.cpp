@@ -1065,7 +1065,7 @@ bool llama_model_loader::load_all_data(
                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
             } else { // when experts Q4, this way
-                ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:                
+                ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:    非常关键的问题：cur->data和data的区别              
             }
         } else {
             const auto & file = files.at(weight->idx);

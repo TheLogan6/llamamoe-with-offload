@@ -1294,6 +1294,87 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
     GGML_ASSERT(interleave_block == 8);
     constexpr int nrows_interleaved = 8;
+    if(t->experts){
+        for(int cur_a = 0; cur_a < t->ne[2]; cur_a++){
+            // todo: 下面else中的代码为tensor = MoE模型中非experts中的权重，如attn_q_weight，
+            // 我现在需要针对experts专家做细粒度的make_block, 其中具体的data地址在t->experts[cur_a]->data中，数据 data+ cur_a * tensor->nb[2]
+            const char * expert_data = (const char *)data + cur_a * t->nb[2];
+            char * expert_dst = (char *)t->experts[cur_a]->data;
+            if(expert_dst){
+                int expert_nrow = t->ne[1];  
+                int nblocks = t->ne[0] / QK4_0;
+
+                GGML_ASSERT(t->experts[cur_a]->data_size == expert_nrow * nblocks * sizeof(block_q4_0));
+
+                const block_q4_0 * src_expert = (const block_q4_0*) expert_data;
+                block_q4_0x8 * dst_expert = (block_q4_0x8*) expert_dst;
+                block_q4_0 dst_tmp[8];
+                for (int b = 0; b < expert_nrow; b += nrows_interleaved) {
+                    for (int64_t x = 0; x < nblocks; x++) {
+                        for (int i = 0; i < nrows_interleaved; i++) {
+                            dst_tmp[i] = src_expert[x + i * nblocks];
+                        }
+                        *dst_expert++ = make_block_q4_0x8(dst_tmp, interleave_block);
+                    }
+                    src_expert += nrows_interleaved * nblocks;
+                }
+
+            }
+            else{
+                // 这里我可以临时给t->experts[cur_a]->data开辟一块空间
+                // char* disk_path = "/home/xuechen/offload_experts/olmoe_test_q4";
+                assert(false);
+            }
+
+
+            
+
+        }
+        return 0;
+    }
+    else{
+        block_q4_0x8 * dst = (block_q4_0x8*)t->data;
+        // template <int K, int N> struct block {
+        //     ggml_half d[N];                         // deltas for N qK_0 blocks
+        //     int8_t    qs[(QK_0<K>() * N * K) / 8];  // quants for N qK_0 blocks
+        // };
+        const block_q4_0 * src = (const block_q4_0*) data;
+        block_q4_0 dst_tmp[8]; 
+        //typedef struct {
+        // ggml_half d;           // delta
+        // uint8_t qs[QK4_0 / 2]; // nibbles / quants
+        // } block_q4_0;
+        int nrow = ggml_nrows(t); // ne[1] * ne[2]
+        int nblocks = t->ne[0] / QK4_0; // 32个元素一组，可以理解为列被压缩了
+
+        GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+
+        if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
+            return -1;
+        }
+
+        for (int b = 0; b < nrow; b += nrows_interleaved) { // nrows_interleaved=8， 每次处理8行
+            for (int64_t x = 0; x < nblocks; x++) { // nblocks=ne[0] / 32(32个元素一个block)
+                for (int i  = 0; i < nrows_interleaved; i++ ) {
+                    dst_tmp[i] = src[x + i * nblocks]; //src[i 行][x 列]
+                }
+                *dst++ = make_block_q4_0x8(dst_tmp, interleave_block);
+            }
+            src += nrows_interleaved * nblocks;
+        }
+        return 0;
+
+        
+    }
+    GGML_UNUSED(data_size);
+
+}
+
+
+static int repack_expert_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+    GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
+    GGML_ASSERT(interleave_block == 8);
+    constexpr int nrows_interleaved = 8;
 
     block_q4_0x8 * dst = (block_q4_0x8*)t->data;
     // template <int K, int N> struct block {
@@ -1480,7 +1561,7 @@ template <> int repack<block_q4_0, 8, 8>(struct ggml_tensor * t, const void * da
     return repack_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
 }
 template <> int repack_expert<block_q4_0, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
+    return repack_expert_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
 }
 
 template <> int repack<block_q4_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
@@ -1742,7 +1823,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
         const int n_ids = ids->ne[0]; // n_expert_used
         const int n_as  = ne02;       // n_expert
 
-        const size_t nbw1 = ggml_row_size(PARAM_TYPE, ne10);
+        const size_t nbw1 = ggml_row_size(PARAM_TYPE, ne10);//2176
         const size_t nbw2 = nbw1*ne11;
         const size_t nbw3 = nbw2*ne12;
 
@@ -1835,7 +1916,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
             q_ex = cur_a;
 
             // const auto * src0_cur = (const char *) src0->data + cur_a*nb02;
-            const auto * src0_cur = (const char *) src0->experts[cur_a]->data + cur_a*nb02;
+            const auto * src0_cur = (const char *) src0->experts[cur_a]->data;
 
             //const int64_t nr0 = ne01; // src0 rows
             const int64_t nr1 = cne1; // src1 rows
