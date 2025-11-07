@@ -15,8 +15,13 @@
 #include <cstring>
 #include <cassert>
 #include <cstdio>  // for GGML_ASSERT
+#include <unistd.h>
+#include <sys/stat.h> 
 
 #include "repack.h"
+
+extern char* global_experts_path;
+extern int32_t global_load_experts_number;
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic ignored "-Woverlength-strings"
@@ -1290,6 +1295,51 @@ static int repack_q2_K_to_q2_K_8_bl(struct ggml_tensor * t, int interleave_block
     GGML_UNUSED(data_size);
 }
 
+int init_expert_repack(struct expert_cache* target,char *dir_path, char * name,bool ifload, int expert_id){
+    if (target == NULL){
+        return -1;
+    }
+    target->loading = false;
+    pthread_mutex_init(&target->mutex,NULL);
+    // pthread_cond_init(&pool->experts[i]->loading_cond, NULL);
+    target->loaded = ifload;
+    char *suffix  = strrchr(name, '.'); // .weight
+    size_t prefix_len = suffix - name; // blk.31.ffn_up_exps
+    char id_str[5];
+    snprintf(id_str, sizeof(id_str), "%d", expert_id);
+    size_t new_len = prefix_len + 1 + strlen(id_str) + strlen(suffix) + 1;
+    target->name = (char *)malloc(new_len);
+    snprintf(target->name, new_len, "%.*s.%s%s", (int)prefix_len, name, id_str, suffix);
+    // printf("name: %s", target->name);
+
+    target->disk_path = NULL;
+    int path_len = snprintf(NULL, 0, "%s/%s", dir_path, target->name) + 1;
+    target->disk_path = (char *)malloc(path_len);
+
+
+    snprintf(target->disk_path, path_len, "%s/%s", dir_path, target->name);
+
+    
+
+    struct stat buffer;
+    
+    // if (stat(target->disk_path, &buffer) != 0) {
+    if(true){
+        FILE *file = fopen(target->disk_path, "wb");
+        if (file != NULL) {
+            fwrite(target->data, 1, target->data_size, file);
+            fclose(file);
+        }
+    }
+
+    if (!ifload){
+        free(target->data);
+        target->data = NULL;
+        return 0;
+    }
+    return 0;
+}
+
 static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
     GGML_ASSERT(interleave_block == 8);
@@ -1318,17 +1368,12 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
                     }
                     src_expert += nrows_interleaved * nblocks;
                 }
-
+                bool ifloaded = false;
+                if(cur_a < global_load_experts_number){
+                    ifloaded = true;
+                }
+                init_expert_repack(t->experts[cur_a], global_experts_path, t->name, ifloaded,cur_a);
             }
-            else{
-                // 这里我可以临时给t->experts[cur_a]->data开辟一块空间
-                // char* disk_path = "/home/xuechen/offload_experts/olmoe_test_q4";
-                assert(false);
-            }
-
-
-            
-
         }
         return 0;
     }
@@ -1954,7 +1999,7 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
     }
 
     int repack(struct ggml_tensor * t, const void * data, size_t data_size) override {
-        GGML_LOG_INFO("%s: repack tensor %s with %s_%dx%d\n", __func__, t->name, ggml_type_name(t->type),
+        GGML_LOG_DEBUG("%s: repack tensor %s with %s_%dx%d\n", __func__, t->name, ggml_type_name(t->type),
                        (int) NB_COLS, (int) INTER_SIZE);
         return ggml::cpu::repack::repack<BLOC_TYPE, INTER_SIZE, NB_COLS>(t, data, data_size);
     }
