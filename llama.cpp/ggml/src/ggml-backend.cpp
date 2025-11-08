@@ -1954,7 +1954,7 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
             tensor->experts[cur_a]->data_size = tensor->nb[2];
             GGML_ASSERT(tensor->experts[cur_a]->data != NULL);  // 确保内存分配成功
             memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);    
-            if(tensor->type == 'GGML_TYPE_F16' || tensor->type == 'GGML_TYPE_F32' || tensor->type == 'GGML_TYPE_BF16' || tensor->type == 'GGML_TYPE_Q4_1'){
+            if(tensor->type == GGML_TYPE_F16 || tensor->type == GGML_TYPE_F32 || tensor->type == GGML_TYPE_BF16 || tensor->type == GGML_TYPE_Q4_1){
                 init_expert(tensor->experts[cur_a],dir_path,tensor->name,ifload,cur_a);
             }        
             

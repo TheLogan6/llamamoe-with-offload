@@ -1203,33 +1203,125 @@ static block_q2_Kx8 make_block_q2_Kx8(block_q2_K * in, unsigned int blck_size_in
 
 }
 
-static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
+int init_expert_repack(struct expert_cache* target,char *dir_path, char * name,bool ifload, int expert_id){
+    if (target == NULL){
+        return -1;
+    }
+    
+    target->loading = false;
+    pthread_mutex_init(&target->mutex,NULL);
+    // printf("expert:%s init, loaded:%d\n", target->name, ifload);
+    // fflush(stdout);
+    // pthread_cond_init(&pool->experts[i]->loading_cond, NULL);
+    target->loaded = ifload;
+    char *suffix  = strrchr(name, '.'); // .weight
+    size_t prefix_len = suffix - name; // blk.31.ffn_up_exps
+    char id_str[5];
+    snprintf(id_str, sizeof(id_str), "%d", expert_id);
+    size_t new_len = prefix_len + 1 + strlen(id_str) + strlen(suffix) + 1;
+    target->name = (char *)malloc(new_len);
+    snprintf(target->name, new_len, "%.*s.%s%s", (int)prefix_len, name, id_str, suffix);
+    // printf("name: %s", target->name);
+
+    target->disk_path = NULL;
+    int path_len = snprintf(NULL, 0, "%s/%s", dir_path, target->name) + 1;
+    target->disk_path = (char *)malloc(path_len);
+
+
+    snprintf(target->disk_path, path_len, "%s/%s", dir_path, target->name);
+
+    
+
+    struct stat buffer;
+    
+    if (stat(target->disk_path, &buffer) != 0) {
+    // if(true){
+        FILE *file = fopen(target->disk_path, "wb");
+        if (file != NULL) {
+            fwrite(target->data, 1, target->data_size, file);
+            fclose(file);
+        }
+    }
+
+    if (!ifload){
+        free(target->data);
+        target->data = NULL;
+        return 0;
+    }
+    return 0;
+}
+
+static int repack_q4_0_to_q4_0_4_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) { // mobile into
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
     GGML_ASSERT(interleave_block == 4 || interleave_block == 8);
     constexpr int nrows_interleaved = 4;
 
-    block_q4_0x4 * dst = (block_q4_0x4 *)t->data;
-    const block_q4_0 * src = (const block_q4_0 *)data;
-    block_q4_0 dst_tmp[4];
-    int nrow = ggml_nrows(t);
-    int nblocks = t->ne[0] / QK4_0;
+    if(t->experts){
+        static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+        int cur_ex = 0;
+        for(cur_ex = 0; cur_ex < t->ne[2]; cur_ex++){
+            pthread_mutex_lock(&mutex);
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+            if(cur_ex >= t->ne[2]) break;
 
-    if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
-        return -1;
-    }
+            // printf("t->name:%s, cur_ex:%d\n",t->name, cur_ex);
+            // fflush(stdout);
 
-    for (int b = 0; b < nrow; b += nrows_interleaved) {
-        for (int64_t x = 0; x < nblocks; x++) {
-            for (int i = 0; i < nrows_interleaved; i++) {
-                dst_tmp[i] = src[x + i * nblocks];
+            const char * expert_data = (const char *)data + cur_ex * t->nb[2];
+            char * expert_dst = (char *)t->experts[cur_ex]->data;
+            if(expert_dst){
+                int expert_nrow = t->ne[1];  
+                int nblocks = t->ne[0] / QK4_0;
+
+                GGML_ASSERT(t->experts[cur_ex]->data_size == expert_nrow * nblocks * sizeof(block_q4_0));
+
+                const block_q4_0 * src_expert = (const block_q4_0*) expert_data;
+                block_q4_0x4 * dst_expert = (block_q4_0x4*) expert_dst;
+                block_q4_0 dst_tmp[8];
+                for (int b = 0; b < expert_nrow; b += nrows_interleaved) {
+                    for (int64_t x = 0; x < nblocks; x++) {
+                        for (int i = 0; i < nrows_interleaved; i++) {
+                            dst_tmp[i] = src_expert[x + i * nblocks];
+                        }
+                        *dst_expert++ = make_block_q4_0x4(dst_tmp, interleave_block);
+                    }
+                    src_expert += nrows_interleaved * nblocks;
+                }
+                bool ifload = true;
+                if(cur_ex > global_load_experts_number){
+                    ifload = false;
+                }
+                init_expert_repack(t->experts[cur_ex], global_experts_path, t->name, ifload,cur_ex);
+                pthread_mutex_unlock(&mutex);
             }
-            *dst++ = make_block_q4_0x4(dst_tmp, interleave_block);
         }
-        src += nrows_interleaved * nblocks;
+        return 0;
     }
-    return 0;
+    else{
+        block_q4_0x4 * dst = (block_q4_0x4 *)t->data;
+        const block_q4_0 * src = (const block_q4_0 *)data;
+        block_q4_0 dst_tmp[4];
+        int nrow = ggml_nrows(t);
+        int nblocks = t->ne[0] / QK4_0;
+
+        GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
+
+        if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
+            return -1;
+        }
+
+        for (int b = 0; b < nrow; b += nrows_interleaved) {
+            for (int64_t x = 0; x < nblocks; x++) {
+                for (int i = 0; i < nrows_interleaved; i++) {
+                    dst_tmp[i] = src[x + i * nblocks];
+                }
+                *dst++ = make_block_q4_0x4(dst_tmp, interleave_block);
+            }
+            src += nrows_interleaved * nblocks;
+        }
+        return 0;
+    }
+    
 
     GGML_UNUSED(data_size);
 }
@@ -1295,50 +1387,8 @@ static int repack_q2_K_to_q2_K_8_bl(struct ggml_tensor * t, int interleave_block
     GGML_UNUSED(data_size);
 }
 
-int init_expert_repack(struct expert_cache* target,char *dir_path, char * name,bool ifload, int expert_id){
-    if (target == NULL){
-        return -1;
-    }
-    target->loading = false;
-    pthread_mutex_init(&target->mutex,NULL);
-    // pthread_cond_init(&pool->experts[i]->loading_cond, NULL);
-    target->loaded = ifload;
-    char *suffix  = strrchr(name, '.'); // .weight
-    size_t prefix_len = suffix - name; // blk.31.ffn_up_exps
-    char id_str[5];
-    snprintf(id_str, sizeof(id_str), "%d", expert_id);
-    size_t new_len = prefix_len + 1 + strlen(id_str) + strlen(suffix) + 1;
-    target->name = (char *)malloc(new_len);
-    snprintf(target->name, new_len, "%.*s.%s%s", (int)prefix_len, name, id_str, suffix);
-    // printf("name: %s", target->name);
-
-    target->disk_path = NULL;
-    int path_len = snprintf(NULL, 0, "%s/%s", dir_path, target->name) + 1;
-    target->disk_path = (char *)malloc(path_len);
 
 
-    snprintf(target->disk_path, path_len, "%s/%s", dir_path, target->name);
-
-    
-
-    struct stat buffer;
-    
-    // if (stat(target->disk_path, &buffer) != 0) {
-    if(true){
-        FILE *file = fopen(target->disk_path, "wb");
-        if (file != NULL) {
-            fwrite(target->data, 1, target->data_size, file);
-            fclose(file);
-        }
-    }
-
-    if (!ifload){
-        free(target->data);
-        target->data = NULL;
-        return 0;
-    }
-    return 0;
-}
 
 static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
     GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
@@ -1415,45 +1465,6 @@ static int repack_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block
 
 }
 
-
-static int repack_expert_q4_0_to_q4_0_8_bl(struct ggml_tensor * t, int interleave_block, const void * GGML_RESTRICT data, size_t data_size) {
-    GGML_ASSERT(t->type == GGML_TYPE_Q4_0);
-    GGML_ASSERT(interleave_block == 8);
-    constexpr int nrows_interleaved = 8;
-
-    block_q4_0x8 * dst = (block_q4_0x8*)t->data;
-    // template <int K, int N> struct block {
-    //     ggml_half d[N];                         // deltas for N qK_0 blocks
-    //     int8_t    qs[(QK_0<K>() * N * K) / 8];  // quants for N qK_0 blocks
-    // };
-    const block_q4_0 * src = (const block_q4_0*) data;
-    block_q4_0 dst_tmp[8]; 
-    //typedef struct {
-    // ggml_half d;           // delta
-    // uint8_t qs[QK4_0 / 2]; // nibbles / quants
-    // } block_q4_0;
-    int nrow = ggml_nrows(t); // ne[1] * ne[2]
-    int nblocks = t->ne[0] / QK4_0; // 32个元素一组，可以理解为列被压缩了
-
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q4_0));
-
-    if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
-        return -1;
-    }
-
-    for (int b = 0; b < nrow; b += nrows_interleaved) { // nrows_interleaved=8， 每次处理8行
-        for (int64_t x = 0; x < nblocks; x++) { // nblocks=ne[0] / 32(32个元素一个block)
-            for (int i  = 0; i < nrows_interleaved; i++ ) {
-                dst_tmp[i] = src[x + i * nblocks]; //src[i 行][x 列]
-            }
-            *dst++ = make_block_q4_0x8(dst_tmp, interleave_block);
-        }
-        src += nrows_interleaved * nblocks;
-    }
-    return 0;
-
-    GGML_UNUSED(data_size);
-}
 
 static block_iq4_nlx4 make_block_iq4_nlx4(block_iq4_nl * in, unsigned int blck_size_interleave) {
     block_iq4_nlx4 out;
@@ -1584,49 +1595,35 @@ namespace ggml::cpu::repack {
 // repack
 template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS>
 int repack(struct ggml_tensor *, const void *, size_t);
-template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS>
-int repack_expert(struct ggml_tensor *, const void *, size_t);
+// template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS>
+// int repack_expert(struct ggml_tensor *, const void *, size_t);
 
 // TODO: generalise.
 template <> int repack<block_q4_0, 4, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_q4_0_to_q4_0_4_bl(t, 4, data, data_size);
 }
-template <> int repack_expert<block_q4_0, 4, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q4_0_to_q4_0_4_bl(t, 4, data, data_size);
-}
 
 template <> int repack<block_q4_0, 8, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q4_0_to_q4_0_4_bl(t, 8, data, data_size);
+    return repack_q4_0_to_q4_0_4_bl(t, 8, data, data_size); // mobile into
 }
-template <> int repack_expert<block_q4_0, 8, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q4_0_to_q4_0_4_bl(t, 8, data, data_size);
-}
+
 
 template <> int repack<block_q4_0, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
 }
-template <> int repack_expert<block_q4_0, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_expert_q4_0_to_q4_0_8_bl(t, 8, data, data_size);
-}
+
 
 template <> int repack<block_q4_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_q4_K_to_q4_K_8_bl(t, 8, data, data_size);
 }
-template <> int repack_expert<block_q4_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q4_K_to_q4_K_8_bl(t, 8, data, data_size);
-}
+
 
 template <> int repack<block_q2_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_q2_K_to_q2_K_8_bl(t, 8, data, data_size);
 }
-template <> int repack_expert<block_q2_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_q2_K_to_q2_K_8_bl(t, 8, data, data_size);
-}
+
 
 template <> int repack<block_iq4_nl, 4, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_iq4_nl_to_iq4_nl_4_bl(t, 4, data, data_size);
-}
-template <> int repack_expert<block_iq4_nl, 4, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_iq4_nl_to_iq4_nl_4_bl(t, 4, data, data_size);
 }
 
@@ -1638,9 +1635,9 @@ template <> int repack_expert<block_iq4_nl, 4, 4>(struct ggml_tensor * t, const 
 template <> int repack<block_iq4_nl, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
     return repack_iq4_nl_to_iq4_nl_8_bl(t, 8, data, data_size);
 }
-template <> int repack_expert<block_iq4_nl, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
-    return repack_iq4_nl_to_iq4_nl_8_bl(t, 8, data, data_size);
-}
+// template <> int repack_expert<block_iq4_nl, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
+//     return repack_iq4_nl_to_iq4_nl_8_bl(t, 8, data, data_size);
+// }
 
 // gemv
 template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE>
@@ -1710,7 +1707,7 @@ class tensor_traits_base : public ggml::cpu::tensor_traits {
   public:
     virtual int repack(struct ggml_tensor * t, const void * data, size_t data_size) = 0;
 
-    virtual int repack_expert(struct ggml_tensor * t, const void * data, size_t data_size) = 0;
+    // virtual int repack_expert(struct ggml_tensor * t, const void * data, size_t data_size) = 0;
 };
 
 uint64_t get_current_time_q() {
@@ -2003,16 +2000,16 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
                        (int) NB_COLS, (int) INTER_SIZE);
         return ggml::cpu::repack::repack<BLOC_TYPE, INTER_SIZE, NB_COLS>(t, data, data_size);
     }
-    int repack_expert(struct ggml_tensor * t, const void * data, size_t data_size) override {
-        GGML_LOG_INFO("%s: repack tensor %s with %s_%dx%d\n", __func__, t->name, ggml_type_name(t->type),
-                       (int) NB_COLS, (int) INTER_SIZE);
-        return ggml::cpu::repack::repack_expert<BLOC_TYPE, INTER_SIZE, NB_COLS>(t, data, data_size);
-    }
+    // int repack_expert(struct ggml_tensor * t, const void * data, size_t data_size) override {
+    //     GGML_LOG_INFO("%s: repack tensor %s with %s_%dx%d\n", __func__, t->name, ggml_type_name(t->type),
+    //                    (int) NB_COLS, (int) INTER_SIZE);
+    //     return ggml::cpu::repack::repack_expert<BLOC_TYPE, INTER_SIZE, NB_COLS>(t, data, data_size);
+    // }
 };
 
 }  // namespace ggml::cpu::repack
 
-static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) {
+static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(const struct ggml_tensor * cur) { //here is phone
 
     // instance for Q4
     static const ggml::cpu::repack::tensor_traits<block_q4_0, 4, 4, GGML_TYPE_Q8_0> q4_0_4x4_q8_0;
@@ -2033,9 +2030,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
                 return &q4_0_8x8_q8_0;
             }
         }
-        if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) {
+        if (ggml_cpu_has_neon() && ggml_cpu_has_matmul_int8()) { 
             if (cur->ne[1] % 4 == 0) {
-                return &q4_0_4x8_q8_0;
+                return &q4_0_4x8_q8_0;// mobile into
             }
         }
         if (ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
@@ -2128,7 +2125,7 @@ class extra_buffer_type : ggml::cpu::extra_buffer_type {
                 op->src[0]->buffer &&
                 (ggml_n_dims(op->src[0]) == 2) &&
                 op->src[0]->buffer->buft == ggml_backend_cpu_repack_buffer_type() &&
-                ggml_repack_get_optimal_repack_type(op->src[0])
+                ggml_repack_get_optimal_repack_type(op->src[0]) // mobile into
                 ) {
             if (op->src[1]->buffer && !ggml_backend_buft_is_host(op->src[1]->buffer->buft)) {
                 return false;
