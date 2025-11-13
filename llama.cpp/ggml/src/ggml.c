@@ -1494,7 +1494,7 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
 
     ggml_critical_section_end();
 
-    struct ggml_context * ctx = GGML_MALLOC(sizeof(struct ggml_context));
+    struct ggml_context * ctx = GGML_MALLOC(sizeof(struct ggml_context)); //40
 
     // allow to call ggml_init with 0 size
     if (params.mem_size == 0) {
@@ -1662,7 +1662,7 @@ static struct ggml_tensor * ggml_new_tensor_impl(
     struct ggml_object * const obj_new = ggml_new_object(ctx, GGML_OBJECT_TYPE_TENSOR, GGML_TENSOR_SIZE + obj_alloc_size);
     GGML_ASSERT(obj_new);
 
-    struct ggml_tensor * const result = (struct ggml_tensor *)((char *)ctx->mem_buffer + obj_new->offs);
+    struct ggml_tensor * const result = (struct ggml_tensor *)((char *)ctx->mem_buffer + obj_new->offs); // ctx为所有的tensor开辟了一块buffer，每次create_tensor去找offset就可以
 
     *result = (struct ggml_tensor) {
         /*.type         =*/ type,
@@ -7254,6 +7254,17 @@ bool ggml_threadpool_params_match(const struct ggml_threadpool_params * p0, cons
 
 
 int ggml_get_layerid_from_name(const struct ggml_tensor * tensor){
+    // tensor->name: case： blk.17.ffn_gate_exps.{}.weight
+    char *start = strstr(tensor->name, "blk.");
+    start += 4;
+    char *end = strchr(start, '.');
+    int number_length = end - start;
+    char numStr[4] = {0};
+    int layerid = atoi(strncpy(numStr, start, number_length));
+    return layerid;
+}
+
+int ggml_get_expertid_from_name(const struct ggml_tensor * tensor){
     // tensor->name: case： blk.17.ffn_gate_exps.{}.weight
     char *start = strstr(tensor->name, "blk.");
     start += 4;

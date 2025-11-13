@@ -184,7 +184,7 @@ bool ggml_backend_buffer_is_host(ggml_backend_buffer_t buffer) {
     return ggml_backend_buft_is_host(ggml_backend_buffer_get_type(buffer));
 }
 
-void ggml_backend_buffer_set_usage(ggml_backend_buffer_t buffer, enum ggml_backend_buffer_usage usage) {
+void ggml_backend_buffer_set_usage(ggml_backend_buffer_t buffer, enum ggml_backend_buffer_usage usage) {//设置buffer使用，用作op调度
     GGML_ASSERT(buffer);
     buffer->usage = usage;
 
@@ -286,7 +286,7 @@ void ggml_backend_tensor_get_async(ggml_backend_t backend, const struct ggml_ten
     }
 }
 
-void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
+void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) { // GGML_TYPE_Q4_0, output_weight
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
 
@@ -298,7 +298,7 @@ void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, siz
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
     GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
 
-    buf->iface.set_tensor(buf, tensor, data, offset, size);
+    buf->iface.set_tensor(buf, tensor, data, offset, size);//attn， ffn
 }
 
 void ggml_backend_tensor_get(const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
@@ -1887,15 +1887,49 @@ int init_expert(struct expert_cache* target,char *dir_path, char * name,bool ifl
         }
     }
 
-    if (!ifload){
-        free(target->data);
-        target->data = NULL;
-        return 0;
-    }
+    free(target->data);
+    target->data = NULL;
+    
+    // if (!ifload){
+    //     free(target->data);
+    //     target->data = NULL;
+    //     return 0;
+    // }
     return 0;
 }
 
+int init_tensors(struct ggml_tensor* target,char *dir_path, char * name, bool ifload){
+    //我现在需要做的是：将target->的data写到磁盘中，然后把其中的target->data给释放掉
+    if (target == NULL){
+        return -1;
+    }
 
+    int path_len = snprintf(NULL, 0, "%s/%s", dir_path, target->name) + 1;
+
+    target->disk_path = (char *)malloc(path_len);
+
+
+    snprintf(target->disk_path, path_len, "%s/%s", dir_path, target->name);
+
+    size_t data_size = target->nb[3];
+
+    struct stat buffer;
+    
+    if (stat(target->disk_path, &buffer) != 0) {
+        FILE *file = fopen(target->disk_path, "wb");
+        if (file != NULL) {
+            fwrite(target->data, 1, data_size, file);
+            fclose(file);
+        }
+    }
+
+    // free(target->data);
+    target->data = NULL;
+    return 0;
+
+}
+
+// output.weight, ffn, attn
 enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct ggml_tensor * tensor, void * addr, char* experts_path, int32_t load_experts_number) {
     GGML_ASSERT(tensor);
     GGML_ASSERT(tensor->buffer == NULL);
@@ -1927,22 +1961,6 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
         
         GGML_ASSERT(tensor->experts != NULL);  // 确保内存分配成功
 
-        // if (false){
-        //     for (int cur_a = 0; cur_a < tensor->ne[2]; cur_a++) {
-        //         const char * expert_src = (const char *)tensor->data + cur_a * tensor->nb[2];
-        //         // 为当前专家分配内存并复制数据
-        //         bool ifload = true;
-        //         if (cur_a != 9 && cur_a != 12 && cur_a != 15){
-        //             ifload = false;
-        //         }
-        //         tensor->experts[cur_a]->data = (void *)malloc(tensor->nb[2]);
-        //         tensor->experts[cur_a]->data_size = tensor->nb[2];
-        //         GGML_ASSERT(tensor->experts[cur_a]->data != NULL);  // 确保内存分配成功
-        //         memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);            
-        //         init_expert(tensor->experts[cur_a],dir_path,tensor->name,ifload,cur_a);
-        //     }
-        // }
-        // else{
         for (int cur_a = 0; cur_a < tensor->ne[2]; cur_a++) {
             const char * expert_src = (const char *)tensor->data + cur_a * tensor->nb[2]; // trigger：这个事情是不是对的？？？因为nb[0]==18,所以就认为是18个bytes是一个group
             // 为当前专家分配内存并复制数据
@@ -1956,21 +1974,28 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
             memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);    
             if(tensor->type == GGML_TYPE_F16 || tensor->type == GGML_TYPE_F32 || tensor->type == GGML_TYPE_BF16 || tensor->type == GGML_TYPE_Q4_1){
                 init_expert(tensor->experts[cur_a],dir_path,tensor->name,ifload,cur_a);
-            }        
+            }
+            else{
+                tensor->experts[cur_a]->data = (void *)expert_src;
+            }
             
         }
-        // }
-        
-
         // munmap(tensor->data, tensor->nb[3]);
     }
+    // else if(strstr(tensor->name, "attn_") != NULL && strstr(tensor->name, "norm") == NULL){ //attn_qkv, attn_output
+        // void * tmp = tensor->data; 
+        // tensor->data = (void *)malloc(tensor->nb[3]);
+        // memcpy(tensor->data, tmp, tensor->nb[3]);
+        // if(tensor->type == GGML_TYPE_F16 || tensor->type == GGML_TYPE_F32 || tensor->type == GGML_TYPE_BF16 || tensor->type == GGML_TYPE_Q4_1){
+        //     init_tensors(tensor, experts_path, tensor->name, false);
+        // } 
+    // }
     else{
-        if (tensor->data!=NULL){
+        if (tensor->data!=NULL){  // output.weight, token_embed
             void * tmp = tensor->data;   //data invalid
             tensor->data = (void *)malloc(tensor->nb[3]);
             memcpy(tensor->data, tmp, tensor->nb[3]);
-            // munmap(tmp, tensor->nb[3]);
-        }           
+        }       
     }
 
     return ggml_backend_buffer_init_tensor(buffer, tensor);

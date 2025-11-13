@@ -76,7 +76,7 @@ static ggml_backend_buffer_type_t * ggml_backend_cpu_device_get_extra_buffers_ty
 }
 
 static bool ggml_backend_cpu_is_extra_buffer_type(ggml_backend_buffer_type_t buft) {
-    for (auto * extra : ggml_backend_cpu_get_extra_buffer_types()) {
+    for (auto * extra : ggml_backend_cpu_get_extra_buffer_types()) { //amx_buffer && cpu_repack
         if (extra == buft) {
             return true;
         }
@@ -408,7 +408,7 @@ static bool ggml_backend_cpu_device_supports_op(ggml_backend_dev_t dev, const st
     // note: only the first sources are checked for extra buffer types to reduce overhead, increase if necessary
     for (int i = 0; i < 4; i++) {
         if (op->src[i] && op->src[i]->buffer &&
-            ggml_backend_cpu_is_extra_buffer_type(op->src[i]->buffer->buft)) {
+            ggml_backend_cpu_is_extra_buffer_type(op->src[i]->buffer->buft)) { // extra type, often used for intermediate tensors
             auto * buf_extra = (ggml::cpu::extra_buffer_type *) op->src[i]->buffer->buft->context;
             return buf_extra->supports_op(dev, op);
         }

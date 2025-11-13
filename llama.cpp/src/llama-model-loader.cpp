@@ -844,9 +844,9 @@ void llama_model_loader::done_getting_tensors() const {
     }
 }
 
-void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps) {
+void llama_model_loader::init_mappings(bool prefetch, llama_mlocks * mlock_mmaps) {// 
     if (use_mmap) {
-        mappings.reserve(files.size());
+        mappings.reserve(files.size()); // reserve space for mappings，预分配容量，不创建元素
         mmaps_used.reserve(files.size());
         for (const auto & file : files) {
             bool is_numa = false;
@@ -885,7 +885,7 @@ void llama_model_loader::get_mapping_range(size_t * first, size_t * last, void *
     *last  = 0;
     *addr = mapping->addr();
     for (ggml_tensor * tensor = ggml_get_first_tensor(ctx); tensor; tensor = ggml_get_next_tensor(ctx, tensor)) {
-        const auto * weight = get_weight(ggml_get_name(tensor));
+        const auto * weight = get_weight(ggml_get_name(tensor)); //weight：包括 idx,offset
         if (!weight || weight->idx != idx) {
             continue;
         }
@@ -1054,7 +1054,8 @@ bool llama_model_loader::load_all_data(
             }
 
             GGML_ASSERT(buf_mmap || cur->data); // either we have a buffer to allocate the tensor in, or it is already allocated
-            if (buf_mmap && cur->data == nullptr) { // when not experts Q4, this way
+            if (buf_mmap && cur->data == nullptr) { // output_norm.weight, token_embed, attn_norm, attn_k_norm, ffn_norm_weight, gate_inp.weight
+            // if ((strcmp(cur->name, "token_embd.weight") == 0) || (buf_mmap && cur->data == nullptr && cur->type != GGML_TYPE_Q6_K && cur->type != GGML_TYPE_Q4_0)) {
                 ggml_backend_tensor_alloc(buf_mmap, cur, data, this->experts_path, this->load_experts_number);  //TODO addr = data
                 if (lmlocks) {
                     const auto & lmlock = lmlocks->at(weight->idx);
@@ -1064,8 +1065,8 @@ bool llama_model_loader::load_all_data(
                 auto & mmap_used = mmaps_used[weight->idx];
                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
-            } else { // when experts Q4, this way
-                ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:    非常关键的问题：cur->data和data的区别              
+            } else { // when experts Q4;  attn_q(Q4), attn_output(Q4) , || 不操作output.weight(Q6), 但是没有token_embed
+                ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:    非常关键的问题：cur->data和data的区别  ,        
             }
         } else {
             const auto & file = files.at(weight->idx);
@@ -1100,7 +1101,7 @@ bool llama_model_loader::load_all_data(
                     read_buf.resize(n_size);
                     file->seek(weight->offs, SEEK_SET);
                     file->read_raw(read_buf.data(), n_size);
-                    ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size);
+                    ggml_backend_tensor_set(cur, read_buf.data(), 0, n_size); // 还是需要repack
                     if (check_tensors && !ggml_validate_row_data(cur->type, read_buf.data(), n_size)) {
                         throw std::runtime_error(format("tensor '%s' has invalid data", ggml_get_name(cur)));
                     }

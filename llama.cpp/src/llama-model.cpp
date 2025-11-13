@@ -26,6 +26,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <sys/mman.h> 
+#include <iostream>
+#include <fstream>
+#include <unistd.h>
 
 extern struct experts_pool* global_expert_pool[3]; 
 
@@ -293,8 +296,8 @@ static bool weight_buft_supported(const llama_hparams & hparams, ggml_tensor * w
 
     // create a temporary dummy buffer for the weight so that supports_op can check the buffer type
     GGML_ASSERT(w->buffer == nullptr);
-    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0); //ggml_backend_amx_buffer_type
-    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor); // 这里是初始开辟空间？
+    w->buffer = ggml_backend_buft_alloc_buffer(buft, 0); //ggml_backend_amx_buffer_type,repack,cpu , 为什么要malloc buffer又free？
+    bool op_supported = ggml_backend_dev_supports_op(dev, op_tensor); // 这里是初始开辟空间？ 
     ggml_backend_buffer_free(w->buffer);
     w->buffer = nullptr;
 
@@ -311,7 +314,7 @@ static ggml_backend_buffer_type_t select_weight_buft(const llama_hparams & hpara
         ggml_backend_dev_t cur_dev = cur.first;
         ggml_backend_buffer_type_t cur_buft = cur.second;
         if (weight_buft_supported(hparams, tensor, op, cur_buft, cur_dev)) {
-            return cur_buft;
+            return cur_buft; //cpu的three backend_cpu_type, only 支持的那个会选择对应的buft
         }
     }
 
@@ -375,7 +378,7 @@ static buft_list_t make_cpu_buft_list(const std::vector<ggml_backend_dev_t> & de
         }
     }
 
-    return buft_list;
+    return buft_list; // CPU： amx_buffer > cpu_repack > cpu_buffer
 }
 
 // GPU: split if LLAMA_SPLIT_MODE_ROW -> GPU
@@ -1982,6 +1985,19 @@ void llama_model::load_vocab(llama_model_loader & ml) {
     vocab.load(ml, kv);
 }
 
+void print_mem(){
+    std::ifstream statm("/proc/self/statm");
+    if (statm.is_open()) {
+        long size, resident;
+        statm >> size >> resident;  // 只需要前两个字段
+        
+        long page_size = sysconf(_SC_PAGESIZE) ;  // 页面大小转换为KB
+        std::cout << "内存占用: " << resident * page_size << " B" << std::endl;
+    }
+}
+
+
+
 bool llama_model::load_tensors(llama_model_loader & ml) {
     const auto & split_mode   = params.split_mode;
     const auto & n_gpu_layers = params.n_gpu_layers;
@@ -1994,7 +2010,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
     LLAMA_LOG_INFO("%s: loading model tensors, this can take a while... (mmap = %s)\n", __func__, ml.use_mmap ? "true" : "false");
 
-    // build a list of buffer types for the CPU and GPU devices
+    // build a list of buffer types for the CPU and GPU devices, here get CPU&GPU buffer types
     pimpl->cpu_buft_list = make_cpu_buft_list(devices, params.use_extra_bufts);
     for (auto * dev : devices) {
         buft_list_t buft_list = make_gpu_buft_list(dev, split_mode, tensor_split);
@@ -2048,16 +2064,16 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     };
 
     // assign the input layer
-    // there is very little benefit to offloading the input layer, so always keep it on the CPU
+    // there is very little benefit to offloading the input layer, so always keep it on the CPU， cpu_buft_list：always three
     pimpl->dev_input = { cpu_dev, &pimpl->cpu_buft_list };
 
     // assign the repeating layers to the devices according to the splits
     pimpl->dev_layer.resize(n_layer);
     for (int il = 0; il < n_layer; ++il) {
         pimpl->dev_layer[il] = get_layer_buft_list(il);
-    }
+    }//pimpl->dev_layer[0]->buft_list[0] = make_cpu_buft_list
 
-    // assign the output layer
+    // assign the output layer, 
     pimpl->dev_output = get_layer_buft_list(n_layer);
 
     // one ggml context per buffer type
@@ -2068,7 +2084,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
     std::map<ggml_backend_buffer_type_t, ggml_context *> ctx_map;
     auto ctx_for_buft = [&](ggml_backend_buffer_type_t buft) -> ggml_context * {
-        auto it = ctx_map.find(buft);
+        auto it = ctx_map.find(buft); //ctx_map: often backend buffer type<=>mem_size & buffer
         if (it == ctx_map.end()) {
             ggml_init_params params = {
                 /*.mem_size   =*/ ctx_size,
@@ -2181,7 +2197,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 }
             }
 
-            // select the buffer type for this tensor
+            // select the buffer type for this tensor, cpu has three tpyes
             buft_list_t * buft_list;
             switch (info.layer) {
                 case LLM_TENSOR_LAYER_INPUT:
@@ -2230,7 +2246,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
 
             // avoid using a host buffer when using mmap
             auto * buft_dev = ggml_backend_buft_get_device(buft);
-            if (ml.use_mmap && buft_dev && buft == ggml_backend_dev_host_buffer_type(buft_dev)) {
+            if (ml.use_mmap && buft_dev && buft == ggml_backend_dev_host_buffer_type(buft_dev)) {//f16:false
                 auto * cpu_dev = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);
                 if (!cpu_dev) {
                     throw std::runtime_error("no CPU backend found");
@@ -2238,7 +2254,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 buft = ggml_backend_dev_buffer_type(cpu_dev);
             }
 
-            if (buft != buft_list->front().second) {
+            if (buft != buft_list->front().second) { // buft != amx_buffer
                 n_moved_tensors++;
                 if (!first_moved_tensor) {
                     first_moved_tensor = t_meta;
@@ -2256,7 +2272,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                     return t;
                 }
             }
-            return ml.create_tensor(ctx, tn, ne, flags);
+            return ml.create_tensor(ctx, tn, ne, flags); // truly return ggml_tensor
         };
 
         layers.resize(n_layer);
@@ -5773,9 +5789,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    ml.done_getting_tensors();
+    ml.done_getting_tensors(); // check tensor numbers
 
-    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);
+    ml.init_mappings(true, use_mlock ? &pimpl->mlock_mmaps : nullptr);//prefetch=true
     pimpl->mappings.reserve(ml.mappings.size());
 
     // create the backend buffers
@@ -5783,7 +5799,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     ctx_bufs.reserve(ctx_map.size());
 
     // Ensure we have enough capacity for the maximum backend buffer we will potentially create
-    const size_t n_max_backend_buffer = ctx_map.size() * ml.files.size();
+    const size_t n_max_backend_buffer = ctx_map.size() * ml.files.size(); // 1*1
     pimpl->bufs.reserve(n_max_backend_buffer);
 
     ml.experts_path = params.experts_path;
@@ -5792,7 +5808,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
     global_experts_path = params.experts_path;
     global_load_experts_number = params.load_experts_number;
     
-    for (auto & it : ctx_map) {
+    for (auto & it : ctx_map) { // only ggml_backend_cpu_buffer_type（这里相当于不包括amx和repack了）
         ggml_backend_buffer_type_t buft = it.first;
         ggml_context * ctx              = it.second;
 
@@ -5818,7 +5834,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         bool buffer_from_host_ptr_supported = props.caps.buffer_from_host_ptr;
         bool is_default_buft = buft == ggml_backend_dev_buffer_type(dev);
 
-        // if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported ) {
+        // if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported ) { ， 只有default buft才可以
         if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
             for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
@@ -5827,7 +5843,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 void * addr = nullptr;
                 size_t first, last; // NOLINT
                 ml.get_mapping_range(&first, &last, &addr, idx, ctx);
-                if (first >= last) {
+                if (first >= last) { // 疑似file顺序错了？
                     continue;
                 }
                 const size_t max_size = ggml_get_max_tensor_size(ctx);
@@ -5840,7 +5856,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
         }
         else {
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//olmoef16 not triggered, q4/amx cpu here
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//olmoef16 not triggered, q4/amx cpu here ， 只有default的buffer类型可以统一进行repack
+            
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -5895,7 +5912,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    // load tensor data
+    // load tensor data ， 这里开始
     
     for (auto & it : ctx_bufs) {  // here might be two
         ggml_context * ctx = it.first;
@@ -5905,10 +5922,48 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
     
-    const auto & mapping = ml.mappings.at(0);
-    munmap(mapping->addr(), mapping->size());
+    if(ml.use_mmap){
+        const auto & mapping = ml.mappings.at(0);
+        munmap(mapping->addr(), mapping->size()); // 释放16GB
+    }
+    
+    print_mem();
+    
+    int cnt = 0;
+    long expert_size = 0;
+    for (const auto& tensor_pair : tensors_by_name) {
+        const std::string name = tensor_pair.first;
+        struct ggml_tensor* tensor = tensor_pair.second;
+        
+        if(strstr(tensor->name, "exps") != NULL){
+            for (int cur_a = 0; cur_a < tensor->ne[2]; cur_a++) {
+                
+                struct expert_cache* target = tensor->experts[cur_a];
+                if(target->loaded == false) continue;
+                FILE *file = fopen(target->disk_path, "rb");
+                if (file == NULL) {
+                    return -1;
+                }
+                cnt++;
+                expert_size += target->data_size;
+                // print_mem();
+                target->data = malloc(target->data_size);   
+                // print_mem();
+                size_t read_size = fread(target->data, 1, target->data_size, file);
+                fclose(file);
 
+                if (read_size != tensor->nb[2]) {
+                    LLAMA_LOG_INFO("%s: read_tensor_error\n", __func__);
+                    return -1;
+                }
+            }
+        }
+        
+    }
+    printf("一共%d个expert load\n", cnt);
+    printf("一共开了%ld个\n", expert_size);
 
+    print_mem();
     if (use_mmap_buffer) {
         for (auto & mapping : ml.mappings) {
             pimpl->mappings.emplace_back(std::move(mapping));

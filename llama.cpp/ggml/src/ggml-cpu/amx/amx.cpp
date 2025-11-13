@@ -68,7 +68,7 @@ static void ggml_backend_amx_buffer_set_tensor(ggml_backend_buffer_t buffer, str
                                                const void * data, size_t offset, size_t size) {
     if (qtype_has_amx_kernels(tensor->type)) {
         GGML_LOG_DEBUG("%s: amx repack tensor %s of type %s\n", __func__, tensor->name, ggml_type_name(tensor->type));
-        ggml_backend_amx_convert_weight(tensor, data, offset, size);
+        ggml_backend_amx_convert_weight(tensor, data, offset, size); // output_weight
     } else {
         memcpy((char *) tensor->data + offset, data, size);
     }

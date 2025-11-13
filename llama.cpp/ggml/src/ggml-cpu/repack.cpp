@@ -1242,12 +1242,14 @@ int init_expert_repack(struct expert_cache* target,char *dir_path, char * name,b
             fclose(file);
         }
     }
+    // free(target->data);
+    target->data = NULL;
 
-    if (!ifload){
-        free(target->data);
-        target->data = NULL;
-        return 0;
-    }
+    // if (!ifload){
+    //     free(target->data);
+    //     target->data = NULL;
+    //     return 0;
+    // }
     return 0;
 }
 
@@ -1361,28 +1363,73 @@ static int repack_q2_K_to_q2_K_8_bl(struct ggml_tensor * t, int interleave_block
     GGML_ASSERT(interleave_block == 8);
     constexpr int nrows_interleaved = 8;
 
-    block_q2_Kx8 * dst = (block_q2_Kx8*)t->data;
-    const block_q2_K * src = (const block_q2_K*) data;
-    block_q2_K dst_tmp[8];
-    int nrow = ggml_nrows(t);
-    int nblocks = t->ne[0] / QK_K;
+    if(t->experts){
+        static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+        int cur_ex = 0;
+        for(cur_ex = 0; cur_ex < t->ne[2]; cur_ex++){
+            pthread_mutex_lock(&mutex);
 
-    GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q2_K));
+            if(cur_ex >= t->ne[2]) break;
 
-    if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
-        return -1;
-    }
+            // printf("t->name:%s, cur_ex:%d\n",t->name, cur_ex);
+            // fflush(stdout);
 
-    for (int b = 0; b < nrow; b += nrows_interleaved) {
-        for (int64_t x = 0; x < nblocks; x++) {
-            for (int i  = 0; i < nrows_interleaved; i++ ) {
-                dst_tmp[i] = src[x + i * nblocks];
+            const char * expert_data = (const char *)data + cur_ex * t->nb[2];
+            char * expert_dst = (char *)t->experts[cur_ex]->data;
+            if(expert_dst){
+                int expert_nrow = t->ne[1];  
+                int nblocks = t->ne[0] / QK_K;
+
+                GGML_ASSERT(t->experts[cur_ex]->data_size == expert_nrow * nblocks * sizeof(block_q2_K));
+
+                const block_q2_K * src_expert = (const block_q2_K*) expert_data;
+                block_q2_Kx8 * dst_expert = (block_q2_Kx8*) expert_dst;
+                block_q2_K dst_tmp[8];
+                for (int b = 0; b < expert_nrow; b += nrows_interleaved) {
+                    for (int64_t x = 0; x < nblocks; x++) {
+                        for (int i = 0; i < nrows_interleaved; i++) {
+                            dst_tmp[i] = src_expert[x + i * nblocks];
+                        }
+                        *dst_expert++ = make_block_q2_Kx8(dst_tmp, interleave_block);
+                    }
+                    src_expert += nrows_interleaved * nblocks;
+                }
+                bool ifload = true;
+                if(cur_ex > global_load_experts_number){
+                    ifload = false;
+                }
+                init_expert_repack(t->experts[cur_ex], global_experts_path, t->name, ifload, cur_ex);
+                pthread_mutex_unlock(&mutex);
             }
-            *dst++ = make_block_q2_Kx8(dst_tmp, interleave_block);
         }
-        src += nrows_interleaved * nblocks;
+        return 0;
     }
-    return 0;
+    else{
+        block_q2_Kx8 * dst = (block_q2_Kx8*)t->data;
+        const block_q2_K * src = (const block_q2_K*) data;
+        block_q2_K dst_tmp[8];
+        int nrow = ggml_nrows(t);
+        int nblocks = t->ne[0] / QK_K;
+
+        GGML_ASSERT(data_size == nrow * nblocks * sizeof(block_q2_K));
+
+        if (t->ne[1] % nrows_interleaved != 0 || t->ne[0] % 8 != 0) {
+            return -1;
+        }
+
+        for (int b = 0; b < nrow; b += nrows_interleaved) {
+            for (int64_t x = 0; x < nblocks; x++) {
+                for (int i  = 0; i < nrows_interleaved; i++ ) {
+                    dst_tmp[i] = src[x + i * nblocks];
+                }
+                *dst++ = make_block_q2_Kx8(dst_tmp, interleave_block);
+            }
+            src += nrows_interleaved * nblocks;
+        }
+        
+        return 0;
+    }
+    
 
     GGML_UNUSED(data_size);
 }
@@ -1618,7 +1665,7 @@ template <> int repack<block_q4_K, 8, 8>(struct ggml_tensor * t, const void * da
 }
 
 
-template <> int repack<block_q2_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) {
+template <> int repack<block_q2_K, 8, 8>(struct ggml_tensor * t, const void * data, size_t data_size) { // cloud q2_k
     return repack_q2_K_to_q2_K_8_bl(t, 8, data, data_size);
 }
 

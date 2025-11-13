@@ -792,7 +792,7 @@ static void ggml_gallocr_init_tensor(ggml_gallocr_t galloc, struct ggml_tensor *
             assert(ggml_backend_buffer_get_alloc_size(galloc->buffers[buffer_id], tensor) <= tensor_alloc->size_max);
             void * base = ggml_backend_buffer_get_base(galloc->buffers[buffer_id]);
             void * addr = (char *)base + tensor_alloc->offset;
-            ggml_backend_tensor_alloc(galloc->buffers[buffer_id], tensor, addr, global_experts_path, global_load_experts_number);
+            ggml_backend_tensor_alloc(galloc->buffers[buffer_id], tensor, addr, global_experts_path, global_load_experts_number); // __fattn__-0
         } else {
             if (tensor->buffer == NULL) {
                 // this tensor was allocated without ggml-backend
@@ -897,7 +897,7 @@ bool ggml_gallocr_alloc_graph(ggml_gallocr_t galloc, struct ggml_cgraph * graph)
             if (src == NULL) {
                 continue;
             }
-            ggml_gallocr_init_tensor(galloc, src, &node_alloc->src[j]);
+            ggml_gallocr_init_tensor(galloc, src, &node_alloc->src[j]); // malloc中间变量 kv flash_attn
         }
         ggml_gallocr_init_tensor(galloc, node, &node_alloc->dst);
     }
