@@ -1065,7 +1065,8 @@ bool llama_model_loader::load_all_data(
                 auto & mmap_used = mmaps_used[weight->idx];
                 mmap_used.first  = std::min(mmap_used.first,  weight->offs);
                 mmap_used.second = std::max(mmap_used.second, weight->offs + n_size);
-            } else { // when experts Q4;  attn_q(Q4), attn_output(Q4) , || 不操作output.weight(Q6), 但是没有token_embed
+            } else {    // when experts Q4;  attn_q(Q4), attn_output(Q4) , || 不操作output.weight(Q6), 但是没有token_embed
+                // printf("ggml_backend_tensor_set: %s\n", cur->name);
                 ggml_backend_tensor_set(cur, data, 0, n_size); //n_size:    非常关键的问题：cur->data和data的区别  ,        
             }
         } else {
@@ -1174,3 +1175,4 @@ void llama_model_loader::print_info() const {
         LLAMA_LOG_INFO("%s: file size   = %.2f GiB (%.2f BPW) \n", __func__, n_bytes/1024.0/1024.0/1024.0, n_bytes*8.0/n_elements);
     }
 }
+

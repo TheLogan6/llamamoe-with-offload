@@ -1242,7 +1242,7 @@ int init_expert_repack(struct expert_cache* target,char *dir_path, char * name,b
             fclose(file);
         }
     }
-    // free(target->data);
+    free(target->data);
     target->data = NULL;
 
     // if (!ifload){

@@ -94,6 +94,7 @@ enum ggml_status ggml_tallocr_alloc(struct ggml_tallocr * talloc, struct ggml_te
     assert(((uintptr_t)addr % talloc->alignment) == 0);
 
     return ggml_backend_tensor_alloc(talloc->buffer, tensor, addr, global_experts_path, global_load_experts_number);
+    // ggml_backend_tensor_set(tensor, data, 0, n_size);
 }
 
 // dynamic tensor allocator
@@ -972,7 +973,7 @@ static bool alloc_tensor_range(struct ggml_context * ctx,
     // void * addr = (char *)ggml_backend_buffer_get_base(&(tallocr.buffer));
     // free(addr);
     return true;
-}
+};
 
 // 不 use mmap 就手动根据ctx malloc
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_context * ctx, ggml_backend_buffer_type_t buft) {
@@ -1026,7 +1027,82 @@ ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors_from_buft(struct ggml_conte
     }
     free(buffers);
     return buffer;
+};
+
+
+
+// struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft_for_repack(struct ggml_context * ctx, ggml_backend_buffer_type_t buft, uint8_t * addr, struct gguf_context * gguf_ctx) {
+struct ggml_backend_buffer * ggml_backend_alloc_ctx_tensors_from_buft_for_repack(struct ggml_context * ctx, ggml_backend_buffer_type_t buft, uint8_t * addr) {
+    // struct gguf_context * gguf_ctx;
+    GGML_ASSERT(ggml_get_no_alloc(ctx) == true);
+
+    size_t alignment = ggml_backend_buft_get_alignment(buft);
+    size_t max_size = ggml_backend_buft_get_max_size(buft);
+
+    ggml_backend_buffer_t * buffers = NULL;
+    size_t n_buffers = 0;
+
+    size_t cur_buf_size = 0;
+    struct ggml_tensor * first = ggml_get_first_tensor(ctx);
+    for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) { 
+        size_t this_size = 0;
+        if (t->data == NULL && t->view_src == NULL) {
+            this_size = GGML_PAD(ggml_backend_buft_get_alloc_size(buft, t), alignment);
+        }
+
+        if (cur_buf_size > 0 && (cur_buf_size + this_size) > max_size) {
+            // allocate tensors in the current buffer
+            if (!alloc_tensor_range(ctx, first, t, buft, cur_buf_size, &buffers, &n_buffers)) {
+                return NULL;
+            }
+            first = t;
+            cur_buf_size = this_size;
+        } else {
+            cur_buf_size += this_size;
+        }
+    }
+
+    // allocate remaining tensors ， ggml_backend_alloc_ctx_tensors_from_buft
+    if (cur_buf_size > 0) {
+        if (!alloc_tensor_range(ctx, first, NULL, buft, cur_buf_size, &buffers, &n_buffers)) {
+            return NULL;
+        }
+    }
+
+
+    // first = ggml_get_first_tensor(ctx);
+    
+    
+    // for (struct ggml_tensor * t = first; t != NULL; t = ggml_get_next_tensor(ctx, t)) { 
+    //     if(t->name[0] == 'c'){ // 排除掉kvcache
+    //         assert(false); 
+    //     }
+    //     const int tensor_idx = gguf_find_tensor(gguf_ctx,  ggml_get_name(t));
+
+    //     uint8_t offs = gguf_get_data_offset(gguf_ctx) + gguf_get_tensor_offset(gguf_ctx, tensor_idx); //绝对意义上是 ml.contexts[0]
+    //     uint8_t * data = (uint8_t *) addr + offs;
+    //     ggml_backend_tensor_set(t, data, 0, t->nb[3]);
+    // }
+
+
+    if (n_buffers == 0) {
+#ifndef NDEBUG
+        GGML_LOG_DEBUG("%s: all tensors in the context are already allocated\n", __func__);
+#endif
+        return NULL;
+    }
+
+    ggml_backend_buffer_t buffer;
+    if (n_buffers == 1) {
+        buffer = buffers[0];
+    } else {
+        buffer = ggml_backend_multi_buffer_alloc_buffer(buffers, n_buffers);
+    }
+    free(buffers);
+    return buffer;
 }
+
+
 
 ggml_backend_buffer_t ggml_backend_alloc_ctx_tensors(struct ggml_context * ctx, ggml_backend_t backend) {
     return ggml_backend_alloc_ctx_tensors_from_buft(ctx, ggml_backend_get_default_buffer_type(backend));

@@ -5856,8 +5856,8 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
             }
         }
         else {
-            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft(ctx, buft);//olmoef16 not triggered, q4/amx cpu here ， 只有default的buffer类型可以统一进行repack
-            
+            uint8_t * addr = (uint8_t *)ml.mappings.at(0)->addr();
+            ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors_from_buft_for_repack(ctx, buft, addr);//olmoef16 not triggered, q4/amx cpu here ， 只有default的buffer类型可以统一进行repack
             if (buf == nullptr) {
                 throw std::runtime_error(format("unable to allocate %s buffer", ggml_backend_buft_name(buft)));
             }
@@ -5912,7 +5912,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         }
     }
 
-    // load tensor data ， 这里开始
+    // load tensor data ， all_data:tensor_data
     
     for (auto & it : ctx_bufs) {  // here might be two
         ggml_context * ctx = it.first;
@@ -5927,9 +5927,7 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
         munmap(mapping->addr(), mapping->size()); // 释放16GB
     }
     
-    print_mem();
     
-    int cnt = 0;
     long expert_size = 0;
     for (const auto& tensor_pair : tensors_by_name) {
         const std::string name = tensor_pair.first;
@@ -5944,9 +5942,9 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 if (file == NULL) {
                     return -1;
                 }
-                cnt++;
+
                 expert_size += target->data_size;
-                // print_mem();
+ 
                 target->data = malloc(target->data_size);   
                 // print_mem();
                 size_t read_size = fread(target->data, 1, target->data_size, file);
@@ -5958,12 +5956,11 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                 }
             }
         }
-        
     }
-    printf("一共%d个expert load\n", cnt);
-    printf("一共开了%ld个\n", expert_size);
+    // printf("一共%d个expert load\n", cnt);
+    // printf("一共开了%ld个\n", expert_size);
 
-    print_mem();
+    // print_mem();
     if (use_mmap_buffer) {
         for (auto & mapping : ml.mappings) {
             pimpl->mappings.emplace_back(std::move(mapping));

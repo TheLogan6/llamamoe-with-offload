@@ -293,6 +293,14 @@ void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, siz
     if (size == 0) {
         return;
     }
+    if(tensor->type == GGML_TYPE_Q2_K || tensor->type == GGML_TYPE_Q4_0){
+        if(strstr(tensor->name, "exps") != NULL){
+            for(int cur_a = 0; cur_a < tensor->ne[2]; cur_a++){
+                tensor->experts[cur_a]->data = (void*)malloc(tensor->nb[2]);
+            }
+        }
+        
+    }
 
     GGML_ASSERT(buf != NULL && "tensor buffer not set");
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
@@ -1968,17 +1976,18 @@ enum ggml_status ggml_backend_tensor_alloc(ggml_backend_buffer_t buffer, struct 
             if (cur_a > load_experts_number){
                 ifload = false;
             }
-            tensor->experts[cur_a]->data = (void *)malloc(tensor->nb[2]);
             tensor->experts[cur_a]->data_size = tensor->nb[2];
-            GGML_ASSERT(tensor->experts[cur_a]->data != NULL);  // 确保内存分配成功
-            memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);    
+            // GGML_ASSERT(tensor->experts[cur_a]->data != NULL);  // 确保内存分配成功
+            // memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);    
             if(tensor->type == GGML_TYPE_F16 || tensor->type == GGML_TYPE_F32 || tensor->type == GGML_TYPE_BF16 || tensor->type == GGML_TYPE_Q4_1){
+                tensor->experts[cur_a]->data = (void *)malloc(tensor->nb[2]);
+                memcpy(tensor->experts[cur_a]->data, expert_src, tensor->nb[2]);    // not sure
                 init_expert(tensor->experts[cur_a],dir_path,tensor->name,ifload,cur_a);
             }
-            else{
-                tensor->experts[cur_a]->data = (void *)expert_src;
-            }
-            
+            // else{
+                // tensor->experts[cur_a]->data = (void *)expert_src;
+            //     printf("1");
+            // }
         }
         // munmap(tensor->data, tensor->nb[3]);
     }
