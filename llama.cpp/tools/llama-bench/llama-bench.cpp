@@ -269,6 +269,8 @@ struct cmd_params {
     bool                             no_warmup;
     output_formats                   output_format;
     output_formats                   output_format_stderr;
+    int                              load_experts_number;
+    std::string                      load_experts_path;
 };
 
 static const cmd_params cmd_params_defaults = {
@@ -305,6 +307,8 @@ static const cmd_params cmd_params_defaults = {
     /* no_warmup            */ false,
     /* output_format        */ MARKDOWN,
     /* output_format_stderr */ NONE,
+    /* load_experts_number  */ 0,
+    /* load_experts_path    */ "",
 };
 
 static void print_usage(int /* argc */, char ** argv) {
@@ -425,7 +429,9 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
     params.delay                = cmd_params_defaults.delay;
     params.progress             = cmd_params_defaults.progress;
     params.no_warmup            = cmd_params_defaults.no_warmup;
+    params.load_experts_number = 0;
 
+    
     for (int i = 1; i < argc; i++) {
         arg = argv[i];
         if (arg.compare(0, arg_prefix.size(), arg_prefix) == 0) {
@@ -436,7 +442,25 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
             if (arg == "-h" || arg == "--help") {
                 print_usage(argc, argv);
                 exit(0);
-            } else if (arg == "-m" || arg == "--model") {
+            } else if (arg == "-ex_path" || arg == "--experts-path") {
+                if (++i >= argc) {
+                    invalid_param = true;
+                    break;
+                }
+                auto p = string_split<std::string>(argv[i], ',');
+                params.load_experts_path = p[0];
+                // params.model.experts_path = new char[value.length() + 1];
+                // std::strcpy(params.model.experts_path, value.c_str());
+                // params.model.insert(params.model.end(), p.begin(), p.end());
+            } else if (arg == "-ex_n" || arg == "--load-experts-number") {
+                if (++i >= argc) {
+                    invalid_param = true;
+                    break;
+                }
+                auto p = parse_int_range(argv[i]);
+                params.load_experts_number = p[0];
+                // params.model.insert(params.model.end(), p.begin(), p.end());
+            }else if (arg == "-m" || arg == "--model") {
                 if (++i >= argc) {
                     invalid_param = true;
                     break;
@@ -911,11 +935,15 @@ struct cmd_params_instance {
     bool               use_mmap;
     bool               embeddings;
     bool               no_op_offload;
+    std::string       load_experts_path;
+    int                load_experts_number;
 
     llama_model_params to_llama_mparams() const {
         llama_model_params mparams = llama_model_default_params();
 
         mparams.n_gpu_layers = n_gpu_layers;
+        mparams.load_experts_number = load_experts_number;
+        mparams.experts_path = strdup(load_experts_path.c_str());
         if (!rpc_servers_str.empty()) {
             auto rpc_servers = string_split<std::string>(rpc_servers_str, ',');
 
@@ -1061,6 +1089,8 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .use_mmap     = */ mmp,
                 /* .embeddings   = */ embd,
                 /* .no_op_offload= */ nopo,
+                /*load_experts_path=*/ params.load_experts_path,
+                /*load_experts_number=*/ params.load_experts_number,
             };
             instances.push_back(instance);
         }
